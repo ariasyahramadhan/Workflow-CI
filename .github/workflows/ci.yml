@@ -1,0 +1,81 @@
+name: MLflow CI — Train & Push Docker
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  train-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout kode
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2. Setup Python
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.7'
+
+      # 3. Install semua dependencies
+      - name: Install dependencies
+        run: |
+          pip install mlflow==2.19.0 scikit-learn pandas numpy \
+                      matplotlib seaborn dagshub
+
+      # 4. Jalankan MLflow Project
+      - name: Run MLflow Project
+        env:
+          MLFLOW_TRACKING_URI:      ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+          DAGSHUB_REPO_NAME:        ${{ secrets.DAGSHUB_REPO_NAME }}
+        run: |
+          cd MLProject
+          mlflow run . --env-manager=local \
+            -P n_estimators=100 \
+            -P max_depth=5 \
+            -P min_samples_split=2
+
+      # 5. Upload artefak ke GitHub
+      - name: Upload MLflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlflow-artifacts
+          path: MLProject/mlruns/
+          retention-days: 30
+
+      # 6. Login ke Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 7. Install Docker buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # 8. Build & Push Docker image menggunakan mlflow build-docker
+      - name: Build and push Docker image
+        env:
+          MLFLOW_TRACKING_URI:      ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+        run: |
+          # Ambil run_id terbaru
+          RUN_ID=$(ls -t MLProject/mlruns/*/meta.yaml 2>/dev/null | head -1 | awk -F'/' '{print $3}' || echo "")
+          
+          # Fallback: pakai model dari local mlruns
+          MODEL_PATH="MLProject/mlruns/0"
+          
+          mlflow models build-docker \
+            --model-uri "MLProject/mlruns/0/$(ls MLProject/mlruns/0/ | head -1)/artifacts/model" \
+            --name "${{ secrets.DOCKER_USERNAME }}/titanic-mlops:latest" \
+            --enable-mlserver
+
+          docker push "${{ secrets.DOCKER_USERNAME }}/titanic-mlops:latest"
+          echo "Docker image pushed: ${{ secrets.DOCKER_USERNAME }}/titanic-mlops:latest"
