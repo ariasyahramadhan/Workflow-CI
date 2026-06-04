@@ -43,7 +43,8 @@ y_test  = pd.read_csv(os.path.join(DATA_DIR, 'y_test.csv')).squeeze()
 print(f"Train: {X_train.shape} | Test: {X_test.shape}")
 
 # ── Training ──────────────────────────────────────────────────────
-mlflow.set_experiment("titanic-ci")
+with mlflow.start_run():
+    model = RandomForestClassifier(
 
 with mlflow.start_run():
     model = RandomForestClassifier(
