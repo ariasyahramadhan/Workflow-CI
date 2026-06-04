@@ -1,0 +1,76 @@
+name: MLflow CI — Train & Push Docker
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  train-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.7'
+
+      - name: Install dependencies
+        run: |
+          pip install mlflow==2.19.0 scikit-learn pandas numpy matplotlib seaborn
+
+      - name: Run MLflow Project
+        run: |
+          cd MLProject
+          mlflow run . --env-manager=local \
+            -P n_estimators=100 \
+            -P max_depth=5 \
+            -P min_samples_split=2
+
+      - name: Upload artifacts ke GitHub
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlflow-artifacts
+          path: MLProject/mlruns/
+          retention-days: 30
+
+      - name: Login ke Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Copy model ke folder build
+        run: |
+          RUN_ID=$(python3 -c "
+          import os, json
+          base = 'MLProject/mlruns'
+          for exp in os.listdir(base):
+            exp_path = os.path.join(base, exp)
+            if not os.path.isdir(exp_path): continue
+            for run in os.listdir(exp_path):
+              meta = os.path.join(exp_path, run, 'meta.yaml')
+              if os.path.exists(meta):
+                print(run)
+                exit()
+          ")
+          echo "Run ID: $RUN_ID"
+          
+          # Copy model artifacts ke folder docker build
+          cp -r MLProject/mlruns/1/$RUN_ID/artifacts/model MLProject/model || \
+          cp -r MLProject/mlruns/0/$RUN_ID/artifacts/model MLProject/model
+          
+          echo "Model berhasil dicopy"
+          ls MLProject/model/
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/titanic-mlops:latest MLProject/
+
+      - name: Push ke Docker Hub
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/titanic-mlops:latest
+          echo "Image berhasil di-push!"
